@@ -4,11 +4,97 @@
 #define TAxCCR_05Hz 0xffff /* timer upper bound count value */
 #define BUTTON_DELAY 0x0300
 
+unsigned int glitch_counters[] = { 0, 0 };
+
+void readData(unsigned char *sCmd, unsigned char *rData, unsigned int i);
 void writeCommand(unsigned char *sCmd, unsigned char i);
 void writeData(unsigned char *sData, unsigned char i);
 void setPosition(unsigned char page, unsigned char col);
 void printNumber(int num);
 void printSymbol(int index, unsigned char page, unsigned int col);
+
+
+
+#pragma vector = PORT1_VECTOR
+__interrupt void S1_handler(void){
+	if(P1IFG & BIT7){
+		if (glitch_counters[0] == 0){
+			if(P1IES & BIT7){
+				unsigned char cmd[2] = { 0, 0 };
+				cmd[0] = (cmd[0] & (~0x0fe)) | ((0x07 << 2) | (0x0fc));
+
+				unsigned char out[2] = { 0 };
+
+				readData(cmd, out, sizeof(cmd));
+
+				printNumber(out[0]);
+			}
+			P1IES ^= BIT7;
+		}
+
+		++glitch_counters[0];
+		TA2CCR1 = TA2R + BUTTON_DELAY;
+		TA2CCTL1 = (TA2CCTL1 & (~0x010)) | CCIE;
+
+		P1IFG &= ~BIT7;
+	}
+}
+
+#pragma vector = PORT2_VECTOR
+__interrupt void Accelerometer_handler(void){
+	if(P2IFG & BIT5){
+		unsigned char cmd[2] = { 0, 0 };
+		cmd[0] = (cmd[0] & (~0x0fe)) | ((0x07 << 2) | (0x0fc));
+
+		unsigned char out[2] = { 0 };
+
+		readData(cmd, out, sizeof(cmd));
+
+		printNumber(out[0]);
+		P2IFG &= ~BIT5;
+	}
+}
+
+#pragma vector = TIMER2_A1_VECTOR
+__interrupt void TA2_handler(void){
+	switch(TA2IV){
+		case TA2IV_TACCR1:
+			// S1
+			glitch_counters[0] = 0;
+			TA2CCTL1 = (TA2CCTL1 & (~0x010)) | (~CCIE & (0x010)); // & ~CCIE;
+			break;
+		default:
+			break;
+	}
+}
+
+void readData(unsigned char *sCmd, unsigned char *rData, unsigned int i){
+	unsigned int gie = __get_SR_register() & GIE;
+	// Make this operation atomic
+	__disable_interrupt();
+    // Select acceleration sensor
+	P3OUT &= ~BIT5;
+
+	while (i){
+		// USCI_B1 TX buffer ready?
+		while (!(UCA0IFG & UCTXIFG)) ;
+		UCA0TXBUF = *sCmd++;
+		if(rData != 0){
+			while (!(UCA0IFG & UCRXIFG)) ;
+			*rData++ = UCA0RXBUF;
+		}
+		--i;
+	}
+
+	// Wait for all TX/RX to finish
+	while (UCB1STAT & UCBUSY) ;
+	// Dummy read to empty RX buffer and clear any overrun conditions
+	UCA0RXBUF;
+	// CS High
+	P3OUT |= BIT5;
+	// Restore original GIE state
+	__bis_SR_register(gie);
+}
 
 void writeCommand(unsigned char *sCmd, unsigned char i) {
     // Store current GIE state
@@ -23,9 +109,7 @@ void writeCommand(unsigned char *sCmd, unsigned char i) {
         // USCI_B1 TX buffer ready?
         while (!(UCB1IFG & UCTXIFG)) ;
         // Transmit data
-        UCB1TXBUF = *sCmd;
-        // Increment the pointer on the array
-        sCmd++;
+        UCB1TXBUF = *sCmd++;
         // Decrement the Byte counter
         i--;
     }
@@ -45,26 +129,26 @@ void writeData(unsigned char *sData, unsigned char i) {
     unsigned int gie = __get_SR_register() & GIE;
     // Make this operation atomic
     __disable_interrupt();
-      // CS Low
-      P7OUT &= ~BIT4;
-      //CD High
-      P5OUT |= BIT6;
+	// CS Low
+	P7OUT &= ~BIT4;
+	//CD High
+	P5OUT |= BIT6;
 
-      while (i){
-          // USCI_B1 TX buffer ready?
-          while (!(UCB1IFG & UCTXIFG)) ;
-          // Transmit data and increment pointer
-          UCB1TXBUF = *sData++;
-          // Decrement the Byte counter
-          i--;
-      }
+	while (i){
+	  // USCI_B1 TX buffer ready?
+	  while (!(UCB1IFG & UCTXIFG)) ;
+	  // Transmit data and increment pointer
+	  UCB1TXBUF = *sData++;
+	  // Decrement the Byte counter
+	  i--;
+	}
 
-      // Wait for all TX/RX to finish
-      while (UCB1STAT & UCBUSY) ;
-      // Dummy read to empty RX buffer and clear any overrun conditions
-      UCB1RXBUF;
-      // CS High
-      P7OUT |= BIT4;
+	// Wait for all TX/RX to finish
+	while (UCB1STAT & UCBUSY) ;
+	// Dummy read to empty RX buffer and clear any overrun conditions
+	UCB1RXBUF;
+	// CS High
+	P7OUT |= BIT4;
 
     // Restore original GIE state
     __bis_SR_register(gie);
@@ -93,7 +177,7 @@ void printNumber(int num){
 	}
 	current_col += 8;
 
-	unsigned char indices[6] = {13, 12, 12, 12, 12, 12};
+	unsigned char indices[4] = {13, 12, 12, 12};
 	int current_pos = sizeof(indices);
 	do {
 		indices[--current_pos] = num % 10;
@@ -118,6 +202,14 @@ int main(void) {
     WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
     __bis_SR_register(GIE);
 
+	P1SEL &= ~BIT7;
+	P1DIR &= ~BIT7;
+	P1OUT |= BIT7;
+	P1REN |= BIT7;
+	P1IES |= BIT7;
+	P1IFG &= ~BIT7;
+	P1IE |= BIT7;
+
 	UCSCTL3 = (UCSCTL3 & (~0x070)) | SELREF__XT1CLK;
 	UCSCTL3 = (UCSCTL3 & (~0x07)) | FLLREFDIV__2;
 	UCSCTL2 = (UCSCTL2 & (~0x0cff)) | ((8 - 1) & (0x0cff)); // FLLN multiplier
@@ -135,10 +227,6 @@ int main(void) {
 	TA2CCTL2 = (TA2CCTL2 & (~0x0100)) & ~CAP;
 	TA2CCTL1 = (TA2CCTL1 & (~0x010)) & ~CCIE;
 	TA2CCTL2 = (TA2CCTL2 & (~0x010)) & ~CCIE;
-
-	UCB1IFG = (UCB1IFG & (~0x03)) | ((~UCTXIFG & (0x02)) | (~UCRXIFG & (0x01)));
-	UCB1IE = (UCB1IE & (~0x03)) | UCTXIE | UCRXIE;
-
 
 	// LCD and UART initialization
 	// Chip select and screen backlight
@@ -161,12 +249,15 @@ int main(void) {
 	// Reset is active low
 	P5OUT |= BIT7;
 	// Disable screen backlight
-	P7OUT &= ~BIT6;
-//	P7OUT |= BIT6;
+//	P7OUT &= ~BIT6;
+	P7OUT |= BIT6;
 
 	P7OUT |= BIT4;
 
 	// Initialize USCI_B1 for SPI Master operation
+	UCB1IFG = (UCB1IFG & (~0x03)) | ((~UCTXIFG & (0x02)) | (~UCRXIFG & (0x01)));
+	UCB1IE = (UCB1IE & (~0x03)) | ((~UCTXIE & 0x02)| (~UCRXIE & 0x01));
+	// UCB1IE = (UCB1IE & (~0x03)) | UCTXIE | UCRXIE;
 	// Put state machine in reset
 	UCB1CTL1 |= UCSWRST;
 	//3-pin, 8-bit SPI master
@@ -179,7 +270,25 @@ int main(void) {
 	UCB1BR1 = 0;
 	// Release USCI state machine
 	UCB1CTL1 &= ~UCSWRST;
-	UCB1IFG &= ~UCRXIFG;
+
+
+	// Initialize USCI_A0 for SPI Master operation
+
+	UCA0IFG = (UCA0IFG & (~0x03)) | ((~UCTXIFG & (0x02)) | (~UCRXIFG & (0x01)));
+	UCA0IE = (UCA0IE & (~0x03)) | ((~UCTXIE & 0x02)| (~UCRXIE & 0x01));
+	// UCA0IE = (UCA0IE & (~0x03)) | (UCTXIE | UCRXIE);
+	// Put state machine in reset
+	UCA0CTL1 |= UCSWRST;
+	// 3-pin, 8-bit SPI master Clock polarity high, MSB
+	UCA0CTL0 = UCCKPH + UCMSB + UCMST + UCMODE_0 + UCSYNC;
+	// Use SMCLK, keep RESET
+	UCA0CTL1 = UCSSEL_2 + UCSWRST;
+	UCA0BR0 = 0x30;
+	UCA0BR1 = 0;
+	// No modulation
+	// UCA0MCTL = 0;
+	// Release USCI state machine
+	UCA0CTL1 &= ~UCSWRST;
 
 
 #define SET_SCROLL_LINE		0x40
@@ -197,42 +306,94 @@ int main(void) {
 #define SET_DISPLAY_ENABLE	0xAE
 #define SYSTEM_RESET		0xE2
 
-	unsigned char cmd[] = {
-	    SET_SCROLL_LINE,		// 0
-	    SET_MX,					// 1
-	    SET_MY,					// 2
-	    SET_ALL_PIXEL_ON,		// 3
-	    SET_INVERSE_DISPLAY,	// 4
-	    SET_PM_MSB,				// 5
-	    SET_PM_LSB,				// 6
-	    SET_POWER_CONTROL,		// 7
-	    SET_PC,					// 8
-	    SET_BIAS_RATIO,			// 9
-	    SET_ADV_CONTROL_MSB,	// 10
-	    SET_ADV_CONTROL_LSB,	// 11
-	    SET_DISPLAY_ENABLE		// 12
-	};
+	{
+		unsigned char cmd[] = {
+			SET_SCROLL_LINE,		// 0
+			SET_MX,					// 1
+			SET_MY,					// 2
+			SET_ALL_PIXEL_ON,		// 3
+			SET_INVERSE_DISPLAY,	// 4
+			SET_PM_MSB,				// 5
+			SET_PM_LSB,				// 6
+			SET_POWER_CONTROL,		// 7
+			SET_PC,					// 8
+			SET_BIAS_RATIO,			// 9
+			SET_ADV_CONTROL_MSB,	// 10
+			SET_ADV_CONTROL_LSB,	// 11
+			SET_DISPLAY_ENABLE		// 12
+		};
 
-	cmd[1] = (cmd[1] & (~0x01)) | (BIT0 & 0x01);
-	cmd[2] = (cmd[2] & (~0x08)) | (BIT3 & 0x08);
-	cmd[3] = (cmd[3] & (~0x01)) | BIT0;
-	cmd[6] = (cmd[6] & (~0x03f)) | (0x030 & (0x03f));
-	cmd[7] = (cmd[7] & (~0x07)) | ((BIT0 | BIT1 | BIT2) & (0x07));
-	cmd[8] = (cmd[8] & (~0x07)) | (0x4 & (0x07));
-	cmd[11] = (cmd[11] & (~0x083)) | ((BIT7) & (0x83));
-	cmd[12] = (cmd[12] & (~0x01)) | BIT0;
+		cmd[1] = (cmd[1] & (~0x01)) | (BIT0 & 0x01);
+		cmd[2] = (cmd[2] & (~0x08)) | (BIT3 & 0x08);
+		cmd[3] = (cmd[3] & (~0x01)) | BIT0;
+		cmd[6] = (cmd[6] & (~0x03f)) | (0x030 & (0x03f));
+		cmd[7] = (cmd[7] & (~0x07)) | ((BIT0 | BIT1 | BIT2) & (0x07));
+		cmd[8] = (cmd[8] & (~0x07)) | (0x4 & (0x07));
+		cmd[11] = (cmd[11] & (~0x083)) | ((BIT7) & (0x83));
+		cmd[12] = (cmd[12] & (~0x01)) | BIT0;
 
-	writeCommand(cmd, sizeof(cmd));
+		writeCommand(cmd, sizeof(cmd));
 
-	int i, j = 0;
-	for (i = 0; i < 132; i+=sizeof(_font[12])){
-		for (j = 0; j < 8; ++j){
-			setPosition(j, i);
-			writeData(_font[12], sizeof(_font[12]));
+		int i, j = 0;
+		for (i = 0; i < 132; i+=sizeof(_font[12])){
+			for (j = 0; j < 8; ++j){
+				setPosition(j, i);
+				writeData(_font[12], sizeof(_font[12]));
+			}
 		}
+
+		cmd[3] = (cmd[3] & (~0x01)) | (~BIT0 & (0x01));
+		writeCommand(cmd + 3, 1);
+
+		printNumber(3123);
 	}
 
-	cmd[3] = (cmd[3] & (~0x01)) | (~BIT0 & (0x01));
-	writeCommand(cmd + 3, 1);
+//	// Chip select and screen backlight
+//	P7SEL &= ~(BIT4 | BIT6);
+//	P7DIR |= (BIT4 | BIT6);
+//
+//	// Reset and Command/Data
+//	P5SEL &= ~(BIT6 | BIT7);
+//	P5DIR |= (BIT6 | BIT7);
+//
+//	// Option select SIMO and select CLK
+//	P4SEL |= (BIT1 | BIT3);
+//	P4DIR |= (BIT1 | BIT3);
+
+
+	// Accelerometer initialization
+	// Chip select and power on
+	P3SEL &= ~(BIT5 | BIT6);
+	P3DIR |= (BIT5 | BIT6);
+
+	// Option select SIMO and SOMI
+	P3SEL |= (BIT3 | BIT4);
+	P3DIR |= (BIT3 | BIT4);
+	// Select CLK
+	P2SEL |= BIT7;
+	P2DIR |= BIT7;
+
+	// Unselect acceleration sensor
+	// Chip select is active low
+	P3OUT &= ~BIT5;
+	P3OUT |= BIT6;
+	P3OUT |= BIT5;
+
+	// Accelerometer interrupt initialization
+	P2DIR &= ~BIT5;
+	P2SEL &= ~BIT5;
+	P2OUT |= BIT5;
+	P2REN |= BIT5;
+	P2IES &= ~BIT5;
+	P2IFG &= ~BIT5;
+	P2IE |= BIT5;
+
+	{
+		unsigned char cmd[2] = { 0, 0 };
+		cmd[0] = (cmd[0] & (~0x0fe)) | (((0x02 << 2) & (0x0fc)) | BIT1) ;
+		cmd[1] = (cmd[1] & (~0x0cf)) | (BIT7 | (0x01 & (0x0e)));
+
+		readData(cmd, 0, sizeof(cmd));
+	}
 	return 0;
 }
