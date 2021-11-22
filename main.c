@@ -93,16 +93,16 @@ void printNumber(int num){
 	}
 	current_col += 8;
 
-	unsigned char indices[5] = {12, 12, 12, 12, 12};
-	int current_pos = 5;
+	unsigned char indices[6] = {13, 12, 12, 12, 12, 12};
+	int current_pos = sizeof(indices);
 	do {
 		indices[--current_pos] = num % 10;
 		num /= 10;
 	} while (num > 0);
 
 	int i;
-	for (i = current_pos; i < current_pos + 5; ++i){
-		printSymbol(indices[i % 5], current_page, current_col);
+	for (i = current_pos; i < current_pos + sizeof(indices); ++i){
+		printSymbol(indices[i % sizeof(indices)], current_page, current_col);
 		current_col += 8;
 	}
 }
