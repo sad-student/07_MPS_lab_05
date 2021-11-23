@@ -21,13 +21,13 @@ __interrupt void S1_handler(void){
 		if (glitch_counters[0] == 0){
 			if(P1IES & BIT7){
 				unsigned char cmd[2] = { 0, 0 };
-				cmd[0] = (cmd[0] & (~0x0fe)) | ((0x07 << 2) | (0x0fc));
+				cmd[0] = (cmd[0] & (~0x0fe)) | ((0x07 << 2) & (0x0fc));
 
 				unsigned char out[2] = { 0 };
 
 				readData(cmd, out, sizeof(cmd));
 
-				printNumber(out[0]);
+				printNumber(out[1]);
 			}
 			P1IES ^= BIT7;
 		}
@@ -44,14 +44,37 @@ __interrupt void S1_handler(void){
 __interrupt void Accelerometer_handler(void){
 	if(P2IFG & BIT5){
 		unsigned char cmd[2] = { 0, 0 };
-		cmd[0] = (cmd[0] & (~0x0fe)) | ((0x07 << 2) | (0x0fc));
+		cmd[0] = (cmd[0] & (~0x0fe)) | ((0x07 << 2) & (0x0fc));
 
 		unsigned char out[2] = { 0 };
 
 		readData(cmd, out, sizeof(cmd));
 
-		printNumber(out[0]);
+		printNumber(out[1]);
 		P2IFG &= ~BIT5;
+	}
+
+	if(P2IFG & BIT2){
+		if(glitch_counters[1] == 0){
+
+			if(P2IES & BIT2){
+				unsigned char cmd[2] = { 0, 0 };
+				cmd[0] = (cmd[0] & (~0x0fe)) | ((0x06 << 2) & (0x0fc));
+
+				unsigned char out[2] = { 0 };
+
+				readData(cmd, out, sizeof(cmd));
+
+				printNumber(out[1]);
+			}
+			P2IES ^= BIT2;
+		}
+
+		++glitch_counters[1];
+		TA2CCR2 = TA2R + BUTTON_DELAY;
+		TA2CCTL2 = (TA2CCTL2 & (~0x010)) | CCIE;
+
+		P2IFG &= ~BIT2;
 	}
 }
 
@@ -62,6 +85,11 @@ __interrupt void TA2_handler(void){
 			// S1
 			glitch_counters[0] = 0;
 			TA2CCTL1 = (TA2CCTL1 & (~0x010)) | (~CCIE & (0x010)); // & ~CCIE;
+			break;
+		case TA2IV_TACCR2:
+			// S2
+			glitch_counters[1] = 0;
+			TA2CCTL2 = (TA2CCTL2 & (~0x010)) | (~CCIE & (0x010)); // & ~CCIE;
 			break;
 		default:
 			break;
@@ -81,7 +109,8 @@ void readData(unsigned char *sCmd, unsigned char *rData, unsigned int i){
 		UCA0TXBUF = *sCmd++;
 		if(rData != 0){
 			while (!(UCA0IFG & UCRXIFG)) ;
-			*rData++ = UCA0RXBUF;
+			*rData = UCA0RXBUF;
+			++rData;
 		}
 		--i;
 	}
@@ -209,6 +238,14 @@ int main(void) {
 	P1IES |= BIT7;
 	P1IFG &= ~BIT7;
 	P1IE |= BIT7;
+
+	P2SEL &= ~BIT2;
+	P2DIR &= ~BIT2;
+	P2OUT |= BIT2;
+	P2REN |= BIT2;
+	P2IES |= BIT2;
+	P2IFG &= ~BIT2;
+	P2IE |= BIT2;
 
 	UCSCTL3 = (UCSCTL3 & (~0x070)) | SELREF__XT1CLK;
 	UCSCTL3 = (UCSCTL3 & (~0x07)) | FLLREFDIV__2;
