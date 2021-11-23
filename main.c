@@ -2,7 +2,7 @@
 #include "font.h"
 
 #define TAxCCR_05Hz 0xffff /* timer upper bound count value */
-#define BUTTON_DELAY 0x0300
+#define BUTTON_DELAY 0x0380
 
 unsigned int glitch_counters[] = { 0, 0 };
 
@@ -207,7 +207,7 @@ void printNumber(int num){
 	current_col += 8;
 
 	unsigned char indices[4] = {13, 12, 12, 12};
-	int current_pos = sizeof(indices);
+	unsigned int current_pos = sizeof(indices);
 	do {
 		indices[--current_pos] = num % 10;
 		num /= 10;
@@ -428,7 +428,7 @@ int main(void) {
 	{
 		unsigned char cmd[2] = { 0, 0 };
 		cmd[0] = (cmd[0] & (~0x0fe)) | (((0x02 << 2) & (0x0fc)) | BIT1) ;
-		cmd[1] = (cmd[1] & (~0x0cf)) | (BIT7 | (0x01 & (0x0e)));
+		cmd[1] = (cmd[1] & (~0x0cf)) | (BIT7 | BIT4 | ((0x01 << 1) & (0x0e)));
 
 		readData(cmd, 0, sizeof(cmd));
 	}
