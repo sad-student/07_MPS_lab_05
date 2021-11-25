@@ -12,7 +12,7 @@ void writeCommand(unsigned char *sCmd, unsigned char i);
 void writeData(unsigned char *sData, unsigned char i);
 void setPosition(unsigned char page, unsigned char col);
 void printNumber(int num);
-void printNumberFloat(int a, int b);
+void printNumberFloat(int a, int b, int sign);
 void printSymbol(int index, unsigned char page, unsigned int col);
 
 // 10000 * ( (val * 1000) / 1609 )
@@ -39,12 +39,12 @@ __interrupt void Accelerometer_handler(void){
 			P8OUT &= ~BIT2;
 		}
 
-		unsigned char sign = out[1] << 7;
 		unsigned char __temp = out[1]; //(out[1] & (0x07f));
 		float result = 0;
 		long weight = 18;
 		if (out[1] & BIT7) {
 			weight = -weight;
+			__temp = -__temp;
 		}
 
 		int i = 0;
@@ -57,9 +57,6 @@ __interrupt void Accelerometer_handler(void){
 		}
 
 //		float scaled = result * 10 / 1609;
-//		if (out[1] & BIT7) {
-//			result = -result;
-//		}
 		result = result * 10.0 / 1609.0;
 		int print_data[2] = { 0, 0 };
 		print_data[0] = (int)(result);
@@ -69,7 +66,7 @@ __interrupt void Accelerometer_handler(void){
 			print_data[1] = -print_data[1];
 		}
 
-		printNumberFloat(print_data[0], print_data[1]);
+		printNumberFloat(print_data[0], print_data[1], result < 0);
 	}
 }
 
@@ -217,7 +214,7 @@ void printNumber(int num){
 	TA2CCTL2 = (TA2CCTL2 & (~0x010)) | CCIE;
 }
 
-void printNumberFloat(int a, int b){
+void printNumberFloat(int a, int b, int sign){
 	if (display_available == 0) {
 		return;
 	}
@@ -226,7 +223,7 @@ void printNumberFloat(int a, int b){
 	unsigned char current_page = 0;
 	unsigned char current_col = 0;
 
-	if (a < 0) {
+	if (sign > 0) {
 		a = -a;
 		printSymbol(11, current_page, current_col);
 	} else {
