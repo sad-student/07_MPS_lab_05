@@ -7,8 +7,6 @@
 
 unsigned int display_available = 1;
 
-unsigned int glitch_counters[] = { 0, 0 };
-
 void readData(unsigned char *sCmd, unsigned char *rData, unsigned int i);
 void writeCommand(unsigned char *sCmd, unsigned char i);
 void writeData(unsigned char *sData, unsigned char i);
@@ -16,33 +14,7 @@ void setPosition(unsigned char page, unsigned char col);
 void printNumber(int num);
 void printSymbol(int index, unsigned char page, unsigned int col);
 
-
-
-#pragma vector = PORT1_VECTOR
-__interrupt void S1_handler(void){
-	if(P1IFG & BIT7){
-		if (glitch_counters[0] == 0){
-			if(P1IES & BIT7){
-				unsigned char cmd_3[2] = { 0, 0 };
-				cmd_3[0] = (cmd_3[0] & (~0x0fe)) | ((0x07 << 2) & (0x0fc));
-
-				unsigned char out[2] = { 0 };
-
-				readData(cmd_3, out, sizeof(cmd_3));
-
-				printNumber((char) out[1]);
-			}
-			P1IES ^= BIT7;
-		}
-
-		++glitch_counters[0];
-		TA2CCR1 = TA2R + BUTTON_DELAY;
-		TA2CCTL1 = (TA2CCTL1 & (~0x010)) | CCIE;
-
-		P1IFG &= ~BIT7;
-	}
-}
-
+// 10000 * ( (val * 1000) / 1609 )
 #pragma vector = PORT2_VECTOR
 __interrupt void Accelerometer_handler(void){
 	if(P2IFG & BIT5){
@@ -53,19 +25,41 @@ __interrupt void Accelerometer_handler(void){
 
 		readData(cmd_4, out, sizeof(cmd_4));
 
-		printNumber((char) out[1]);
-		// P2IFG &= ~BIT5;
+		if (out[1] > (16 / 2) && out[1] < 18){
+			P8OUT |= BIT2;
+		} else {
+			P8OUT &= ~BIT2;
+		}
+
+		unsigned int __temp = out[1];
+		long result = 0;
+		long weight = 18;
+		if (__temp & BIT7) {
+			weight = -weight;
+		}
+
+		int i = 0;
+		for (i = 0; i < 7; ++i){
+			if (__temp & BIT0){
+				result += weight;
+			}
+			__temp >>= 1;
+			weight <<= 1;
+		}
+		long scaled = result * 10 / 1609;
+//		int temp = 0;
+//		if (out[1] & BIT7){
+//			temp = out[1] - (1 << 8);
+//		} else {
+//			temp = out[1];
+//		}
+		printNumber(scaled);
 	}
 }
 
 #pragma vector = TIMER2_A1_VECTOR
 __interrupt void TA2_handler(void){
 	switch(TA2IV){
-		case TA2IV_TACCR1:
-			// S1
-			glitch_counters[0] = 0;
-			TA2CCTL1 = (TA2CCTL1 & (~0x010)) | (~CCIE & (0x010)); // & ~CCIE;
-			break;
 		case TA2IV_TACCR2:
 			// Display
 			display_available = 1;
@@ -218,21 +212,10 @@ int main(void) {
     WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
     __bis_SR_register(GIE);
 
-	P1SEL &= ~BIT7;
-	P1DIR &= ~BIT7;
-	P1OUT |= BIT7;
-	P1REN |= BIT7;
-	P1IES |= BIT7;
-	P1IFG &= ~BIT7;
-	P1IE |= BIT7;
+    P8OUT &= ~BIT2;
+    P8SEL &= ~BIT2;
+    P8DIR |= BIT2;
 
-//	P2SEL &= ~BIT2;
-//	P2DIR &= ~BIT2;
-//	P2OUT |= BIT2;
-//	P2REN |= BIT2;
-//	P2IES |= BIT2;
-//	P2IFG &= ~BIT2;
-//	P2IE |= BIT2;
 
 	UCSCTL3 = (UCSCTL3 & (~0x070)) | SELREF__XT1CLK;
 	UCSCTL3 = (UCSCTL3 & (~0x07)) | FLLREFDIV__2;
@@ -281,8 +264,6 @@ int main(void) {
 	UCA0CTL1 = UCSSEL_2 + UCSWRST;
 	UCA0BR1 = 0;
 	UCA0BR0 = 0x30;
-	// No modulation
-	// UCA0MCTL = 0;
 	// Release USCI state machine
 	UCA0CTL1 &= ~UCSWRST;
 
@@ -307,8 +288,7 @@ int main(void) {
 	P5OUT &= BIT7;
 	// Reset is active low
 	P5OUT |= BIT7;
-	// Disable screen backlight
-//	P7OUT &= ~BIT6;
+	// Enable screen backlight
 	P7OUT |= BIT6;
 
 
@@ -366,8 +346,6 @@ int main(void) {
 
 		cmd_1[3] = (cmd_1[3] & (~0x01)) | (~BIT0 & (0x01));
 		writeCommand(cmd_1 + 3, 1);
-
-		printNumber(3123);
 	}
 
 	// Accelerometer initialization
@@ -391,12 +369,9 @@ int main(void) {
 	P2SEL &= ~BIT5;
 	P2OUT |= BIT5;
 	P2REN |= BIT5;
-//	P2OUT &= ~BIT5;
-//	P2REN |= BIT5;
 	P2IES &= ~BIT5;
 	P2IFG &= ~BIT5;
 	P2IE |= BIT5;
-//	P2IE &= ~BIT5;
 
 	{
 		unsigned char cmd_2[2] = { 0, 0 };
@@ -406,10 +381,6 @@ int main(void) {
 		unsigned char out_2[2] = { 0, 0 };
 
 		readData(cmd_2, out_2, sizeof(cmd_2));
-
-		if(out_2[0] != 0){
-			int temp = 0;
-		}
 	}
 	return 0;
 }
