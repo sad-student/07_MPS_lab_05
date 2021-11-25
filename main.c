@@ -12,6 +12,7 @@ void writeCommand(unsigned char *sCmd, unsigned char i);
 void writeData(unsigned char *sData, unsigned char i);
 void setPosition(unsigned char page, unsigned char col);
 void printNumber(int num);
+void printNumberFloat(float num);
 void printSymbol(int index, unsigned char page, unsigned int col);
 
 // 10000 * ( (val * 1000) / 1609 )
@@ -25,14 +26,21 @@ __interrupt void Accelerometer_handler(void){
 
 		readData(cmd_4, out, sizeof(cmd_4));
 
-		if (out[1] > (16 / 2) && out[1] < 18){
+		int data = 0;
+		if (out[1] & BIT7){
+			data = out[1] - (1 << 8);
+		} else {
+			data = out[1];
+		}
+
+		if (data > (16 / 2)/* && data < 18*/){
 			P8OUT |= BIT2;
 		} else {
 			P8OUT &= ~BIT2;
 		}
 
-		unsigned int __temp = out[1];
-		long result = 0;
+		unsigned char __temp = out[1];
+		float result = 0;
 		long weight = 18;
 		if (__temp & BIT7) {
 			weight = -weight;
@@ -46,14 +54,8 @@ __interrupt void Accelerometer_handler(void){
 			__temp >>= 1;
 			weight <<= 1;
 		}
-		long scaled = result * 10 / 1609;
-//		int temp = 0;
-//		if (out[1] & BIT7){
-//			temp = out[1] - (1 << 8);
-//		} else {
-//			temp = out[1];
-//		}
-		printNumber(scaled);
+		float scaled = result * 10 / 1609;
+		printNumberFloat(scaled);
 	}
 }
 
@@ -201,6 +203,55 @@ void printNumber(int num){
 	TA2CCTL2 = (TA2CCTL2 & (~0x010)) | CCIE;
 }
 
+void printNumberFloat(float num){
+	if (display_available == 0) {
+		return;
+	}
+	display_available = 0;
+
+	unsigned char current_page = 0;
+	unsigned char current_col = 0;
+
+	if (num < 0) {
+		num = -num;
+		printSymbol(11, current_page, current_col);
+	} else {
+		printSymbol(10, current_page, current_col);
+	}
+	current_col += 8;
+
+	int print_data[2] = { 0, 0 };
+	print_data[0] = (int)(num);
+	print_data[1] = (int)((num - ((int)(num))) * 100);
+
+	unsigned char indices[10] = { 12, 12, 12, 12, 12, 12, 12, 12, 12, 12 };
+
+	int p = 0;
+	for (p = sizeof(print_data) - 1; p >= 0 ; --p){
+		unsigned int current_pos = sizeof(indices);
+		do {
+			indices[--current_pos] = print_data[p] % 10;
+			print_data[p] /= 10;
+		} while (print_data[p] > 0);
+
+		int bound_correction = 0;
+		if (p == 0){
+			indices[0] = 12;
+			bound_correction = 1;
+		}
+		if (p == sizeof(print_data) - 1){
+			int bound_correction = current_pos;
+		}
+	}
+
+	int i;
+	for (i = current_pos; i < current_pos + sizeof(indices); ++i){
+		printSymbol(indices[i % sizeof(indices)], current_page, current_col);
+		current_col += 8;
+	}
+	TA2CCR2 = TA2R + (TAxCCR_05Hz / DISPLAY_RATE);
+	TA2CCTL2 = (TA2CCTL2 & (~0x010)) | CCIE;
+}
 void printSymbol(int index, unsigned char page, unsigned int col){
 	setPosition(page+1, col);
 	writeData(_font[index], 6);
