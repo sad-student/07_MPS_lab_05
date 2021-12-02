@@ -15,6 +15,7 @@ void printNumber(int num);
 void printNumberFloat(int a, int b, int sign);
 void printSymbol(int index, unsigned char page, unsigned int col);
 
+int max_data = 14;
 // 10000 * ( (val * 1000) / 1609 )
 #pragma vector = PORT2_VECTOR
 __interrupt void Accelerometer_handler(void){
@@ -33,12 +34,15 @@ __interrupt void Accelerometer_handler(void){
 			data = out[1];
 		}
 
-		if (data > (16 / 2)/* && data < 18*/){
+		if(max_data < data){
+			max_data = data;
+		}
+
+		if ((float)(max_data)*1.73/2 <= (float)(data)/* && data < 18*/){
 			P8OUT |= BIT2;
 		} else {
 			P8OUT &= ~BIT2;
 		}
-
 		unsigned char __temp = out[1]; //(out[1] & (0x07f));
 		float result = 0;
 		long weight = 18;
@@ -67,6 +71,8 @@ __interrupt void Accelerometer_handler(void){
 		}
 
 		printNumberFloat(print_data[0], print_data[1], result < 0);
+		//printNumber(data);
+//		}
 	}
 }
 
